@@ -34,7 +34,33 @@ function crearComprobante(){if(!comprobanteActual)throw new Error('Primero calcu
 const recorrido=c.recorrido.map((p,i)=>`<li><b>${i===0?'Origen':i===c.recorrido.length-1?'Destino':'Parada '+i}:</b> ${escaparHTML(p)}</li>`).join('');return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Comprobante viaje ${escaparHTML(c.folio)}</title><style>body{font:15px Arial,sans-serif;color:#182f4a;max-width:760px;margin:35px auto;padding:0 20px}header{border-bottom:3px solid #1765c1;padding-bottom:16px}h1{font-size:24px;margin:0 0 6px}h2{font-size:18px;margin:24px 0 10px}p{color:#54657b}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px;border-bottom:1px solid #dfe7f0}th{width:43%;background:#f5f8fc}ol{line-height:1.9;padding-left:24px}.total{background:#eaf4ff;padding:15px;border-radius:10px;font-size:20px;font-weight:bold}.note{font-size:12px;line-height:1.6;color:#64748b;margin-top:22px}.actions{margin-top:22px}.actions button{background:#1765c1;color:white;border:0;padding:12px 18px;border-radius:8px;cursor:pointer}@media print{.actions{display:none}body{margin:0;max-width:none}}
 .weekly-toggle{display:flex;align-items:flex-start;gap:10px;margin:4px 0 15px;font-size:13px;font-weight:700;color:#183b60}.weekly-toggle input{width:18px;height:18px;flex:none;margin:1px 0}.weekly-amount{padding:12px;background:#f0f6ff;border:1px solid #d5e6fa;border-radius:10px;margin:10px 0}.weekly-amount label{margin:0 0 7px}.weekly-disabled{opacity:.45;pointer-events:none}.weekly-disabled select,.weekly-disabled button,.weekly-disabled input{background:#edf0f4}.weekly-metrics{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:15px}.weekly-metrics .metric:last-child{grid-column:1/-1}@media(max-width:500px){.weekly-metrics{grid-template-columns:1fr}}
 </style></head><body><header><h1>Comprobante de viaje: ${escaparHTML(c.folio)}</h1></header><h2>Datos del viaje</h2><table>${fila('Fecha de cálculo',c.fecha)}${fila('Colaborador',c.colaborador)}${fila('Empresa',c.empresa)}${fila('Área / Departamento',c.departamento)}${fila('Vehículo',c.vehiculo)}${fila('Ruta seleccionada','Ruta '+c.ruta)}${fila('Combustible',c.combustible)}${fila('Rendimiento',c.rendimiento+' km/l')}${fila('Precio por litro',dinero(c.precio))}</table><h2>Recorrido</h2><ol>${recorrido}</ol><h2>Resultados</h2><table>${fila('Distancia por carretera',c.kilometros+' km (Kilómetros ajustados)')}${fila('Tiempo aproximado',c.tiempo+' min')}${fila('Combustible estimado',c.litros.toFixed(2)+' L')}</table><p class="total">Costo estimado: ${escaparHTML(dinero(c.costo))}</p><p class="note">Kilómetros ajustados: distancia por carretera más 5%, redondeada hacia arriba. El combustible y costo se estiman con esa distancia. No incluye peajes, tráfico en vivo ni variaciones por carga.</p><div class="actions"><button onclick="window.print()">Imprimir o guardar como PDF</button></div></body></html>`}
-$('printReceipt').addEventListener('click',()=>{if(!comprobanteActual)return;const ventana=window.open('','_blank');if(!ventana){alert('Permite las ventanas emergentes para descargar tu comprobante en PDF.');return}ventana.document.open();ventana.document.write(crearComprobante());ventana.document.close();ventana.focus();setTimeout(()=>{if(!ventana.closed)ventana.print()},350)});
+const REGISTRO_URL='https://script.google.com/macros/s/AKfycbwJh75MTFGWK_p8CMRhix4nCPNVlOCOFCs4PAlwCMYBuRFDWPKhCPKkTHxwKh3lvZPk/exec';
+let guardandoComprobante=false;
+function datosParaSheets(c){
+ const semanal=c.tipo==='semanal';
+ return {folio:String(c.folio),colaborador:c.colaborador,empresa:c.empresa,departamento:c.departamento||'',tipo:semanal?'Semanal':'Viaje',vehiculo:c.vehiculo,combustible:c.combustible,precioLitro:c.precio,rendimiento:c.rendimiento,origen:semanal?'':c.origen,paradas:semanal?'':(c.paradas||[]).join(' → '),destino:semanal?'':c.destino,ruta:semanal?'':'Ruta '+c.ruta,kilometros:semanal?'':c.kilometros,tiempo:semanal?'':c.tiempo+' min',litros:c.litros,costo:semanal?'':c.costo,gastoSemanal:semanal?c.autorizado:''};
+}
+$('printReceipt').addEventListener('click',async()=>{
+ if(!comprobanteActual||guardandoComprobante)return;
+ // Abrir la ventana dentro del clic evita que el navegador bloquee el PDF tras esperar la red.
+ const ventana=window.open('','_blank');
+ if(!ventana){alert('Permite las ventanas emergentes para descargar tu comprobante en PDF.');return}
+ ventana.document.write('<!doctype html><html lang="es"><meta charset="utf-8"><title>Registrando comprobante</title><body style="font:16px Arial;padding:35px">Registrando la solicitud en Google Sheets. Espera un momento...</body></html>');
+ const boton=$('printReceipt');guardandoComprobante=true;boton.disabled=true;boton.textContent='Registrando en Google Sheets...';
+ try{
+   const snapshot={...comprobanteActual};
+   const response=await fetch(REGISTRO_URL,{method:'POST',redirect:'follow',mode:'cors',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(datosParaSheets(snapshot))});
+   if(!response.ok)throw new Error('HTTP '+response.status);
+   const resultado=await response.json();
+   if(resultado.ok!==true||String(resultado.folio)!==String(snapshot.folio))throw new Error(resultado.error||'Respuesta de registro no válida');
+   ventana.document.open();ventana.document.write(crearComprobante());ventana.document.close();
+   ventana.focus();setTimeout(()=>{if(!ventana.closed)ventana.print()},400);
+   setStatus(resultado.duplicado?'Comprobante ya registrado: puedes volver a guardar el PDF.':'Solicitud registrada en Google Sheets. Puedes guardar el PDF.');
+ }catch(error){
+   ventana.document.open();ventana.document.write('<!doctype html><html lang="es"><meta charset="utf-8"><title>No se pudo confirmar el registro</title><body style="font:16px Arial;padding:35px"><h2>No se pudo confirmar el registro en Google Sheets</h2><p>Revisa la hoja Registros antes de intentar de nuevo: la solicitud podría haberse guardado aunque el navegador haya bloqueado la respuesta.</p><p>No se generó el PDF porque no recibimos confirmación.</p></body></html>');ventana.document.close();
+   setStatus('No se pudo confirmar el registro en Google Sheets. Comprueba si apareció el folio antes de reintentar. Detalle: '+error.message,true);
+ }finally{guardandoComprobante=false;boton.disabled=false;boton.textContent='Descargar mi comprobante'}
+});
 function openResults(){$('resultModal').classList.remove('hidden');document.body.classList.add('modal-open');$('closeModal').focus()}
 function closeResults(){$('resultModal').classList.add('hidden');document.body.classList.remove('modal-open')}
 $('closeModal').addEventListener('click',closeResults);$('closeModalBottom').addEventListener('click',closeResults);
